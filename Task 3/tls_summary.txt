@@ -1,0 +1,182 @@
+TLS Communication Inspection & Analysis – Task 3
+
+------------------------------------------------
+1. OpenSSL s_client Connection
+------------------------------------------------
+
+Command used:
+
+  openssl s_client -connect 142.250.184.132:443 -servername google.com.ge -showcerts
+
+Target:
+- IP address: 142.250.184.132
+- Host (SNI): google.com.ge
+- Port: 443
+
+From the OpenSSL output I collected:
+
+TLS version:
+- Protocol: TLSv1.3
+
+Cipher suite:
+- Cipher: TLS_AES_256_GCM_SHA384
+
+Server key and signatures:
+- Server public key type: EC (elliptic curve), curve prime256v1
+- Server public key size: 256 bit
+- Peer signing digest: SHA256
+- Peer signature type: ecdsa_secp256r1_sha256
+
+Key exchange:
+- Negotiated TLS1.3 group: X25519MLKEM768
+  (Hybrid key exchange group used to create the shared secret.)
+
+Verification:
+- Verification: OK
+- Verify return code: 0 (ok)
+
+Certificate chain (from -showcerts and depth lines):
+
+Leaf (end-entity) certificate (depth=0):
+- Subject (s): CN=*.google.com.ge
+- Issuer (i): C=US, O=Google Trust Services, CN=WE2
+- Public key: EC, prime256v1
+- Signature algorithm: ecdsa-with-SHA256
+- Validity: NotBefore: Oct 27 08:36:19 2025 GMT
+            NotAfter : Jan 19 08:36:18 2026 GMT
+- This is the website certificate for *.google.com.ge.
+
+Intermediate CA (depth=1):
+- Subject: C=US, O=Google Trust Services, CN=WE2
+- Issuer : C=US, O=Google Trust Services LLC, CN=GTS Root R4
+- Public key: EC, prime256v1
+- Signature algorithm: ecdsa-with-SHA384
+- Validity: NotBefore: Dec 13 09:00:00 2023 GMT
+            NotAfter : Feb 20 14:00:00 2029 GMT
+- This CA signs the leaf certificate.
+
+Root-style CA in the chain (depth=2):
+- Subject: C=US, O=Google Trust Services LLC, CN=GTS Root R4
+- Issuer : C=BE, O=GlobalSign nv-sa, OU=Root CA, CN=GlobalSign Root CA
+- Public key: EC, secp384r1
+- Signature algorithm: sha256WithRSAEncryption
+- Validity: NotBefore: Nov 15 03:43:21 2023 GMT
+            NotAfter : Jan 28 00:00:42 2028 GMT
+- This is the GTS Root R4 certificate, cross-signed by GlobalSign Root CA.
+
+Logical trust chain:
+
+  GlobalSign Root CA (trust anchor in OS/browser)
+    → GTS Root R4 (Google Trust Services LLC)
+      → WE2 (Google Trust Services)
+        → *.google.com.ge (leaf)
+
+This is how the client can verify that the server certificate belongs to a trusted hierarchy.
+
+
+------------------------------------------------
+2. Wireshark Capture of TLS Handshake (openssl.pcapng)
+------------------------------------------------
+
+I captured the TLS handshake while running the `openssl s_client` command and saved it to a file called `openssl.pcapng`. Then I opened this file in Wireshark.
+
+Steps:
+- File → Open → select `openssl.pcapng`.
+- Display filter used:
+    tcp.port == 443
+
+This filtered out other traffic and showed the packets between my client and 142.250.184.132:443.
+
+In this capture I identified the required handshake messages:
+
+a) Client Hello
+
+- Direction: from my client IP → 142.250.184.132.
+- Protocol column: TLSv1.3.
+- Info column: "Client Hello".
+
+When I expand this packet under:
+  Transport Layer Security
+    → Handshake Protocol: Client Hello
+
+I can see:
+- TLS Version: TLS 1.3 (supported versions).
+- A list of supported cipher suites (including TLS_AES_256_GCM_SHA384).
+- Extensions:
+  - server_name: google.com.ge (SNI)
+  - key_share: containing the client’s key share for the key exchange (group X25519MLKEM768).
+
+This packet is the start of the TLS 1.3 handshake from the client side.
+
+b) Server Certificate
+
+After the Client Hello, I see packets from 142.250.184.132 to my client with:
+
+- "Server Hello" (choosing TLSv1.3 and the cipher suite).
+- Later, a handshake message with Info column containing "Certificate".
+
+When I click the "Certificate" message and expand:
+
+  Transport Layer Security
+    → Handshake Protocol: Certificate
+
+I see the certificate chain sent by the server. It matches what `openssl s_client` printed:
+
+- Leaf certificate:
+  - Subject: CN=*.google.com.ge
+  - Issuer : CN=WE2
+
+- Intermediate certificate:
+  - Subject: CN=WE2
+  - Issuer : CN=GTS Root R4
+
+- Root-style certificate:
+  - Subject: CN=GTS Root R4
+  - Issuer : GlobalSign Root CA
+
+This confirms that Wireshark and OpenSSL show the same certificate chain.
+
+c) Key Exchange
+
+Because this is TLS 1.3, there is no separate "Server Key Exchange" message. The key exchange is done via the key_share extension inside the Client Hello and Server Hello.
+
+In Wireshark:
+
+- In the Client Hello packet, under the "key_share" extension, I see the client’s key share.
+- In the Server Hello packet, under its "key_share" extension, I see the server’s key share.
+
+The group shown there is X25519MLKEM768, which matches the "Negotiated TLS1.3 group: X25519MLKEM768" line from the OpenSSL output.
+
+From these key shares, client and server derive the same shared secret, which is used later to derive the symmetric keys for AES-256-GCM.
+
+
+------------------------------------------------
+3. How TLS Provides Confidentiality and Integrity
+------------------------------------------------
+
+Confidentiality:
+- After the TLS 1.3 key exchange, both client and server share symmetric session keys that nobody else knows.
+- In this connection the cipher suite is TLS_AES_256_GCM_SHA384.
+  - AES-256 is a strong symmetric cipher.
+  - GCM is an authenticated encryption mode.
+- All HTTP data sent in this session is encrypted using these keys.
+- An attacker can still see the packets, but the content is unreadable without the keys.
+
+Integrity:
+- TLS also stops attackers from silently modifying the data.
+- With AES-GCM, each TLS record includes an authentication tag.
+- When the receiver decrypts a record, it checks this tag.
+- If the data was changed in transit, the integrity check fails and the record is rejected.
+- This provides protection against tampering and man-in-the-middle modifications.
+
+Authentication:
+- The certificate chain (GlobalSign Root CA → GTS Root R4 → WE2 → *.google.com.ge) is validated by the client.
+- As long as the root CA is in the trust store and the hostname matches, the client can trust that it is really talking to the genuine google.com.ge server.
+
+Together, these properties give TLS:
+- Confidentiality (encryption with AES-256-GCM),
+- Integrity (AEAD tag checks),
+- Authentication (certificate validation).
+
+
+

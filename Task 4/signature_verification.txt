@@ -1,0 +1,39 @@
+Signature Verification – How It Proves the Sender (Alice)
+
+In this lab, Alice signs the message with her private key and Bob verifies it with her public key. The important idea is that the private key and public key belong together as a pair.
+
+1. Alice signs with her private key
+- Alice has a PGP key pair:
+  - Public key: can be shared with everyone
+  - Private key: secret, only Alice should have it
+- When she runs gpg with the --sign option, GPG:
+  - Calculates a hash of the message
+  - Encrypts this hash using Alice’s private key
+  - Attaches this encrypted hash (the digital signature) to the message
+
+2. Bob verifies with Alice’s public key
+- Bob has Alice’s public key imported into his keyring (alice_pub.asc).
+- When Bob runs `gpg --decrypt signed_message.asc`, GPG:
+  - Decrypts the message (using Bob’s private key, for confidentiality)
+  - Uses Alice’s public key to check the digital signature
+  - Recomputes the hash of the decrypted message
+  - Compares the recomputed hash with the one inside the signature
+
+3. Why this proves the sender
+- Only the person who owns Alice’s private key can create a valid signature that matches Alice’s public key.
+- If the message is changed, the hash will not match and GPG will show a bad signature.
+- If an attacker tries to pretend to be Alice without her private key, GPG will not show "Good signature from Alice Lab".
+
+4. What GPG shows
+- When everything is correct, Bob sees a line like:
+    gpg: Good signature from "Alice Lab <alice@sangu.edu.ge>"
+- This line means:
+  - The message was signed with the private key that belongs to Alice’s public key.
+  - The content was not modified after it was signed.
+
+5. Security properties
+- Authentication: Bob knows the message really came from Alice (or at least from the holder of Alice’s private key).
+- Integrity: Bob knows the message has not been changed since Alice signed it.
+- Non-repudiation (in theory): Alice cannot easily deny sending the message if her private key was not stolen.
+
+In this way, the digital signature in PGP is what validates the sender identity and protects the integrity of the internal company message.
